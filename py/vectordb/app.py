@@ -424,7 +424,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8080) -> int:  # pragma: no co
     app = build_app()
     ollama = OllamaClient()
     up = ollama.is_available()
-    print("=== VectorDB Engine ===")
+    print("=== Tessera Engine ===")
     print(f"http://localhost:{port}")
     print(f"{DIMS} dims | HNSW+KD-Tree+BruteForce")
     print(f"Ollama: {'ONLINE' if up else 'OFFLINE (install from ollama.com)'}")

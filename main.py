@@ -1,5 +1,5 @@
 """Shim that mirrors the C++ `main.cpp` entry point: running this
-file starts the VectorDB & RAG server on port 8080.
+file starts the Tessera vector database and RAG server on port 8080.
 
 The implementation lives in `py/vectordb/app.py`.  The package is
 imported through the `py/` directory's `__init__.py` (which adds

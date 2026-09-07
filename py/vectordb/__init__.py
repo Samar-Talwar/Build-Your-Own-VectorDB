@@ -1,4 +1,4 @@
-"""VectorDB & RAG engine — Python port of main.cpp.
+"""Tessera — vector database and RAG engine.
 
 A small in-memory vector database and retrieval-augmented generation service.
 Three search algorithms (BruteForce, KD-Tree, HNSW), three distance metrics

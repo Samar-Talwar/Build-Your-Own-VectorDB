@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vectordb"
 version = "2.0.0"
-description = "VectorDB & RAG engine — Python port of main.cpp"
+description = "Tessera — vector database and RAG engine"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0",

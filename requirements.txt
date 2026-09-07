@@ -1,4 +1,4 @@
-# Runtime dependencies for the VectorDB & RAG Python server.
+# Runtime dependencies for the Tessera vector database and RAG server.
 # Install with:  pip install -r requirements.txt
 flask>=3.0
 numpy>=1.26
