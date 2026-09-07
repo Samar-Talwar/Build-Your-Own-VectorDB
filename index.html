@@ -562,7 +562,7 @@ function renderResults(results) {
       <div class="rmeta">${r.metadata}</div>
       <div class="rfoot">
         <span class="rcat" style="background:${col}18;color:${col};border:1px solid ${col}44">${r.category.toUpperCase()}</span>
-        <span class="rdist">dist: ${r.distance.toFixed(5)}</span>
+        <span class="rdist">dist: ${parseFloat(r.distance).toFixed(5)}</span>
         <button class="del" onclick="deleteItem(${r.id})">✕</button>
       </div>
     </div>`;

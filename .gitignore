@@ -16,3 +16,33 @@ bin/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.env.venv/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Parity-test fixtures (captured C++ outputs)
+/.parity_captures/
+/vectordb_cpp
+/vectordb_cpp.exe

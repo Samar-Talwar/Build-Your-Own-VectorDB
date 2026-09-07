@@ -1,0 +1,10 @@
+# Runtime dependencies for the VectorDB & RAG Python server.
+# Install with:  pip install -r requirements.txt
+flask>=3.0
+numpy>=1.26
+
+# Test dependencies (used by `pip install -r requirements.txt[test]` or
+# the `dev` extra in pyproject.toml).
+pytest>=8.0
+pytest-cov>=4.1
+httpx>=0.27
