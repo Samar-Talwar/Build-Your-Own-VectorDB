@@ -1,354 +1,302 @@
-# VectorDB — Build a Vector Database from Scratch in C++
+# Tessera
 
-A fully working **Vector Database** built from scratch in Python with a web UI.  
-Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
+A small, in-memory vector database and retrieval-augmented generation (RAG) engine with a browser UI. Tessera bundles three ANN/exact search algorithms, three distance metrics, document chunking, and a local-LLM-backed Q&A pipeline, served as a single Python process over HTTP.
 
-> Built as an educational project to show how production vector databases like Pinecone, Weaviate, and Chroma actually work under the hood.
+The implementation is a line-faithful Python port of a former C++/cpp-httplib backend. The C++ source and the vendored HTTP dependency have been removed; only the Python service remains.
 
 ---
 
-## What This Project Does
+## What it does
 
-| Feature | Description |
+| Capability | Notes |
 |---|---|
-| **3 Search Algorithms** | HNSW (production-grade), KD-Tree, Brute Force — run all three and compare speed |
-| **3 Distance Metrics** | Cosine similarity, Euclidean distance, Manhattan distance |
-| **16D Demo Vectors** | 20 pre-loaded semantic vectors across 4 categories (CS, Math, Food, Sports) |
-| **2D PCA Scatter Plot** | Live visualization of semantic space — watch clusters form |
-| **Real Document Embedding** | Paste any text → Ollama embeds it with `nomic-embed-text` (768D) |
-| **RAG Pipeline** | Ask questions about your documents → HNSW retrieves context → local LLM answers |
-| **Full REST API** | CRUD endpoints: insert, delete, search, benchmark, hnsw-info |
+| Three search algorithms | Brute Force (exact), KD-Tree (exact, axis-aligned), HNSW (hand-ported, approximate) |
+| Three distance metrics | Cosine similarity, Euclidean, Manhattan |
+| 16-dimensional demo vectors | 20 pre-seeded vectors across four categories (CS, Math, Food, Sports) for the UI and benchmark |
+| Document embeddings | Real 768-dimensional embeddings via Ollama's `nomic-embed-text` |
+| Document chunking | Long texts are split into ~250-word overlapping chunks before embedding |
+| RAG pipeline | Embed a question, retrieve the top-k chunks, generate an answer with a local LLM |
+| REST API | 14 HTTP routes, byte-exact JSON formatting, CORS preflight |
+| Browser UI | A single-page `index.html` served from the root, with PCA scatter, query bar, and chat |
+
+The frontend renders an HNSW graph view; the graph shape is produced by a hand-ported HNSW implementation, not a third-party library, to keep the topology deterministic and comparable to the original C++ build.
 
 ---
 
-## How It Works
+## Architecture
 
-```
-Your Text
-    │
-    ▼
-Ollama (nomic-embed-text)          ← converts text to a 768-dimensional vector
-    │
-    ▼
-HNSW Index (Python)                   ← indexes the vector in a multilayer graph
-    │
-    ▼
-Semantic Search                    ← finds nearest neighbors in vector space
-    │
-    ▼
-Ollama (llama3.2)                  ← reads retrieved chunks, generates an answer
-    │
-    ▼
-Answer
+```mermaid
+flowchart TD
+    Browser[index.html<br/>UI: search, scatter, chat]
+    Flask[Flask app<br/>14 HTTP routes<br/>CORS preflight]
+    VDB[VectorDB<br/>16D demo vectors]
+    DDB[DocumentDB<br/>768D chunk store]
+    BF[BruteForce]
+    KDT[KD-Tree]
+    HNSW[HNSW<br/>hand-ported]
+    Chunk[chunker.py]
+    OEmbed[Ollama<br/>nomic-embed-text]
+    OGen[Ollama<br/>llama3.2]
+
+    Browser --> Flask
+    Flask --> VDB
+    Flask --> DDB
+    VDB --> BF
+    VDB --> KDT
+    VDB --> HNSW
+    DDB --> HNSW
+    DDB --> BF
+    Flask --> Chunk
+    Chunk --> OEmbed
+    OEmbed --> DDB
+    Flask --> OGen
 ```
 
-**HNSW (Hierarchical Navigable Small World)** is the same algorithm used by Pinecone, Weaviate, Chroma, and Milvus. It builds a multilayer graph where each layer is progressively sparser — searches start at the top layer and zoom in, achieving O(log N) complexity instead of O(N) for brute force.
+The service is a single Flask process. `VectorDB` holds the 16-dimensional demo vectors and exposes all three algorithms behind a unified search interface. `DocumentDB` stores embedded text chunks and falls back to brute force for fewer than 10 items, otherwise using HNSW with a brute-force mirror to keep the small-N path exact. The chunker splits incoming text on word boundaries; Ollama is the only external service the server talks to, and every Ollama call is best-effort — if the server is unreachable the route returns an `err(...)` JSON body with HTTP 200, matching the original C++ behavior.
+
+### Modules
+
+| File | Role |
+|---|---|
+| `py/vectordb/app.py` | Flask app; the 14 routes and CORS handling live here |
+| `py/vectordb/db.py` | `VectorDB` wrapper around the three indices |
+| `py/vectordb/document_db.py` | `DocumentDB`; chunk store with hybrid brute-force / HNSW search |
+| `py/vectordb/bruteforce.py` | Linear-scan k-NN; the ground-truth path |
+| `py/vectordb/kdtree.py` | Axis-aligned k-d tree |
+| `py/vectordb/hnsw.py` | Hand-ported HNSW, deterministic graph shape |
+| `py/vectordb/distances.py` | Cosine, Euclidean, Manhattan |
+| `py/vectordb/chunker.py` | Overlapping word-boundary chunker |
+| `py/vectordb/ollama.py` | Thin HTTP client for `/api/embeddings` and `/api/generate` |
+| `py/vectordb/demo_data.py` | The 20 seeded 16D vectors |
+| `py/vectordb/json_format.py` | Hand-rolled float / string / vector formatters (byte-exact output) |
+| `py/vectordb/__main__.py` | `python -m vectordb` entry point |
+| `py/vectordb/__init__.py` | Package metadata (`DIMS=16`, `OLLAMA_HOST`, `OLLAMA_PORT`) |
 
 ---
 
-## Prerequisites
+## Implementation details
 
-You need **3 things** installed on your Windows laptop:
-
-1. **Python 3.11+** (gives you Python interpreter)
-2. **Git**
-3. **Ollama** (runs the local AI models)
-
----
-
-## Step-by-Step Setup (Windows)
-
-### Step 1 — Install Python 3.11+ (Python Runr)
-
-1. Go to **https://www.msys2.org** and download the installer
-2. Run the installer, keep default path (`C:\msys64`)
-3. After install, open **Python 3.11+ UCRT64** from Start Menu (the orange icon)
-4. Run these commands inside the Python 3.11+ terminal:
-
-```bash
-pacman -Syu
-```
-*(Close and reopen the terminal if it asks you to)*
-
-```bash
-pacman -S python
-```
-
-5. Add python to your Windows PATH:
-   - Press `Win + R`, type `sysdm.cpl`, press Enter
-   - Click **Advanced** → **Environment Variables**
-   - Under **System variables**, find **Path**, click **Edit**
-   - Click **New** and add: `C:\msys64\ucrt64\bin`
-   - Click OK on all windows
-   - **Open a new PowerShell** and verify:
-   ```
-   python --version
-   ```
-   You should see something like `python (GCC) 15.x.x`
+- **16-dimensional demo vectors.** All demo data and the in-memory demo index use 16 dimensions. The dimension is fixed in `py/vectordb/__init__.py` as `DIMS = 16`; the search and benchmark routes reject vectors of any other length.
+- **HNSW configuration.** `M = 16`, `ef_construction = 200`, search `ef = 50`. The graph is built deterministically — the same insertion order produces the same `/hnsw-info` output — because the index is consumed by the UI's graph rendering.
+- **Distance metrics.** Cosine similarity is clamped to be non-negative. Euclidean is the standard L2 norm. Manhattan is the L1 norm. Each metric is a plain Python function in `distances.py`; algorithms take a distance function as an argument.
+- **Document embeddings.** `nomic-embed-text` produces 768-dimensional vectors. Dimensions are detected lazily on the first chunk inserted into `DocumentDB`.
+- **Document chunking.** `chunk_text(text, 250, 30)` produces chunks of up to 250 words with a 30-word overlap. Single-chunk documents are stored under their original title; multi-chunk documents get a `Title [i/N]` suffix.
+- **In-memory state.** Both indices live in process memory. Restarting the server reseeds the 20 demo vectors and clears all document chunks — there is no persistence layer.
+- **Flask single-threaded.** The server is started with `app.run(threaded=False)`. This preserves the request-handling semantics of the original C++ service; it is not safe to share the `VectorDB` or `DocumentDB` instances across threads.
+- **JSON formatting.** Responses are built by string concatenation through `f4`, `f6`, `f4q`, `f6q`, `j_s`, and `j_vec` in `json_format.py`. The byte-exact output is load-bearing: the frontend reads the JSON shape (including the quoted form of `f6q`-formatted floats) and assumes a stable layout. Standard `json.dumps` is intentionally not used.
+- **CORS.** All responses carry `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, and `Access-Control-Allow-Headers`. `OPTIONS` requests are intercepted in a `before_request` handler and answered with HTTP 204.
+- **C++ removed.** The repository no longer contains the original C++ backend or the vendored `httplib.h` single-header HTTP library. The Python service is the only implementation.
 
 ---
 
-### Step 2 — Install Git
+## Installation
 
-1. Go to **https://git-scm.com/download/win** and download Git for Windows
-2. Run the installer with default settings
-3. Verify in PowerShell:
-```
-git --version
-```
+### Prerequisites
 
----
+- **Python ≥ 3.11** (declared in `py/pyproject.toml`)
+- **Ollama** (optional, but required for `/doc/*` and RAG routes). Install from <https://ollama.com>.
 
-### Step 3 — Install Ollama (Local AI Models)
-
-1. Go to **https://ollama.com** and click **Download for Windows**
-2. Run the installer
-3. Ollama starts automatically in the system tray
-4. Open **PowerShell** and pull the two required models:
+### Setup (Windows / PowerShell)
 
 ```powershell
-ollama pull nomic-embed-text
-```
-*(~274 MB — this is the embedding model)*
+# 1. Clone
+git clone <repository-url> tessera
+cd tessera
 
-```powershell
-ollama pull llama3.2
-```
-*(~2 GB — this is the language model)*
-
-5. Verify Ollama is running:
-```powershell
-ollama list
-```
-You should see both models listed.
-
-> **Minimum specs for Ollama:** 8GB RAM recommended. The models will use ~3GB total.
-
----
-
-### Step 4 — Clone the Repository
-
-Open **PowerShell** and run:
-
-```powershell
-git clone https://github.com/YOUR_USERNAME/VectorDB.git
-cd VectorDB
-```
-
-*(Replace `YOUR_USERNAME` with the actual GitHub username)*
-
----
-
-### Step 5 — Run the Python Server
-
-Inside the `VectorDB` folder, create a virtual environment and install dependencies:
-
-```powershell
+# 2. Create a virtual environment
 python -m venv .venv
 .\.venv\Scripts\activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
-```
 
-Then start the server:
+# 4. (Optional) Install Ollama and pull the models
+#    Download from https://ollama.com/download
+ollama pull nomic-embed-text
+ollama pull llama3.2
 
-```powershell
+# 5. Start the server (from the repo root)
 python main.py
+#    or, equivalently:
+#    python -m vectordb
 ```
 
-> **Troubleshooting:**
-> - `python: command not found` → Python 3.11+ not in PATH, redo Step 1 point 5
-> - `undefined reference to WSA...` → missing `-lws2_32` flag, add it
-> - Takes too long? Remove `-O2` for faster (but slower executable) compile
+### Setup (Unix / Conda)
 
----
+```bash
+git clone <repository-url> tessera
+cd tessera
 
-### Step 6 — Run Everything
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-**Terminal 1** — Start Ollama (if not already running):
-```powershell
-ollama serve
-```
-*(If Ollama is already in the system tray, skip this)*
-
-**Terminal 2** — Start the VectorDB server:
-```powershell
-python main.py
+# Ollama is the same on every platform:
+ollama pull nomic-embed-text
+ollama pull llama3.2
 ```
 
-You should see:
+### Entry points
+
+- `python main.py` from the repo root — a thin shim that calls `py.vectordb.run_server()`.
+- `python -m vectordb` — the package's own `__main__`. Identical behavior.
+- `vectordb-server` — installed as a console script by `pip install .`; defined in `py/pyproject.toml`.
+
+### Server output
+
 ```
 === VectorDB Engine ===
 http://localhost:8080
-20 demo vectors | 16 dims | HNSW+KD-Tree+BruteForce
+16 dims | HNSW+KD-Tree+BruteForce
 Ollama: ONLINE
   embed model: nomic-embed-text  gen model: llama3.2
 ```
 
-**Open your browser** and go to:
-```
-http://localhost:8080
-```
+Open <http://localhost:8080> in a browser to use the UI.
 
 ---
 
-## Using the Application
+## Running the tests
 
-### Tab 1: Search (Demo Vectors)
-
-- Type any concept in the search box: `binary tree`, `sushi`, `basketball`, `calculus`
-- Choose your algorithm: **HNSW**, **KD-Tree**, or **Brute Force**
-- Choose distance metric: **Cosine**, **Euclidean**, or **Manhattan**
-- Click **⚡ SEARCH** — results appear with distances, the matching point glows on the scatter plot
-- Click **▶ COMPARE ALL ALGOS** to run all 3 algorithms and compare their speed
-
-**The scatter plot** shows all 20 vectors projected to 2D using PCA. Notice how the 4 semantic categories (CS, Math, Food, Sports) form distinct clusters — this is what "semantic similarity" looks like visually.
-
-### Tab 2: Documents (Real Embeddings)
-
-This uses Ollama to generate **real 768-dimensional embeddings** from any text.
-
-1. Type a title (e.g., `Operating Systems Notes`)
-2. Paste any text — lecture notes, textbook paragraphs, Wikipedia articles
-3. Click **⚡ EMBED & INSERT**
-4. Long documents are automatically split into overlapping 250-word chunks
-5. Each chunk gets its own embedding and is stored in a separate HNSW index
-
-### Tab 3: Ask AI (RAG Pipeline)
-
-1. Make sure you have inserted some documents in Tab 2 first
-2. Type a question about your documents
-3. Click **🤖 ASK AI**
-
-What happens behind the scenes:
-```
-1. Your question → embedded with nomic-embed-text (768D vector)
-2. HNSW search → finds 3 most semantically similar chunks
-3. Retrieved chunks → sent as context to llama3.2
-4. llama3.2 → generates an answer based only on your documents
+```bash
+# From the repo root, with the virtual environment active
+cd py
+pytest
 ```
 
-The answer streams in with a typewriter effect. Click the **context chips** to see exactly which chunks the AI used.
+The test suite contains 93 tests across 12 files. It covers the API layer, brute-force and KD-tree indices, the hand-ported HNSW, document chunking and retrieval, JSON formatting helpers, the Ollama client, the demo seed data, and the package's distance functions. The tests run without Ollama being available; Ollama-dependent paths are exercised against a mock client.
+
+The tests do not assert runtime parity with the previous C++ implementation against parity-test fixtures. The migration preserves the wire format and the visible algorithm behavior, but a byte-level C++↔Python comparison is not currently part of the test suite.
 
 ---
 
-## REST API Reference
+## HTTP API reference
 
-The server exposes a full REST API at `http://localhost:8080`.
+All routes return JSON. On a validation error the server returns HTTP 200 with a `{"ok":false,"err":"..."}` body; this matches the original C++ behavior, where the status line was always 200.
 
-### Demo Vector Endpoints
+CORS preflight (`OPTIONS` to any route) is handled in a `before_request` hook and returns HTTP 204 with the three `Access-Control-Allow-*` headers.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/search?v=f1,f2,...&k=5&metric=cosine&algo=hnsw` | K-NN search |
-| `POST` | `/insert` | Insert a demo vector |
-| `DELETE` | `/delete/:id` | Delete by ID |
-| `GET` | `/items` | List all demo vectors |
-| `GET` | `/benchmark?v=...&k=5&metric=cosine` | Compare all 3 algorithms |
-| `GET` | `/hnsw-info` | HNSW graph structure and layer stats |
-| `GET` | `/stats` | Database statistics |
+### Demo vectors
 
-### Document & RAG Endpoints
+#### `GET /`
+Returns the contents of `index.html` from the repo root (or `./index.html` if not found one level up). `Content-Type: text/html`.
 
-| Method | Endpoint | Body | Description |
+#### `GET /search`
+k-NN search over the 16-dimensional demo index.
+
+| Query param | Type | Default | Notes |
 |---|---|---|---|
-| `POST` | `/doc/insert` | `{"title":"...","text":"..."}` | Embed and store document |
-| `GET` | `/doc/list` | — | List all stored documents |
-| `DELETE` | `/doc/delete/:id` | — | Delete document chunk |
-| `POST` | `/doc/ask` | `{"question":"...","k":3}` | RAG: retrieve + generate |
-| `GET` | `/status` | — | Ollama status and model info |
+| `v` | string | required | Comma-separated 16 floats |
+| `k` | int | `5` | Number of neighbors |
+| `metric` | string | `cosine` | `cosine`, `euclidean`, `manhattan` |
+| `algo` | string | `hnsw` | `bruteforce`, `kdtree`, `hnsw` |
 
-### Example: Search via curl
-
-```powershell
-curl "http://localhost:8080/search?v=0.9,0.8,0.7,0.6,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1&k=3&metric=cosine&algo=hnsw"
+Response shape:
+```json
+{
+  "results": [
+    {"id": 7, "metadata": "...", "category": "...", "distance": 0.012345, "embedding": [0.1, 0.2, ...]}
+  ],
+  "latencyUs": 142,
+  "algo": "hnsw",
+  "metric": "cosine"
+}
 ```
 
-### Example: Ask a question via curl
+#### `POST /insert`
+Insert one 16-dimensional demo vector. JSON body: `{"metadata": "...", "category": "...", "emb": [16 floats]}`. Response: `{"id": <int>}`.
 
-```powershell
-curl -X POST http://localhost:8080/doc/ask `
-  -H "Content-Type: application/json" `
-  -d '{"question":"What is dynamic programming?","k":3}'
+#### `DELETE /delete/<id>`
+Delete the demo vector with the given numeric id. Response: `{"ok": true}` or `{"ok": false}`.
+
+#### `GET /items`
+List every demo vector. Response: a JSON array of `{id, metadata, category, embedding}` objects.
+
+#### `GET /benchmark`
+Run all three algorithms against the same query and return per-algorithm latencies in microseconds.
+
+| Query param | Type | Default |
+|---|---|---|
+| `v` | string | required, 16 floats |
+| `k` | int | `5` |
+| `metric` | string | `cosine` |
+
+Response: `{"bruteforceUs": int, "kdtreeUs": int, "hnswUs": int, "itemCount": int}`.
+
+#### `GET /hnsw-info`
+Inspect the HNSW graph topology. Used by the UI to draw the graph.
+
+Response: top layer, node count, per-layer node and edge counts, plus a flat list of nodes (`{id, metadata, category, maxLyr}`) and edges (`{src, dst, lyr}`).
+
+#### `GET /stats`
+Static index summary: `{"count": int, "dims": 16, "algorithms": [...], "metrics": [...]}`.
+
+### Documents and RAG
+
+#### `POST /doc/insert`
+Chunk, embed, and store a document. JSON body: `{"title": "...", "text": "..."}`. Each chunk is embedded with `nomic-embed-text` (768D) and inserted into the `DocumentDB` index. Response: `{"ids": [...], "chunks": int, "dims": 768}`. If the embedding model is unreachable, the route returns an error body instead of partial data.
+
+#### `DELETE /doc/delete/<id>`
+Remove a single chunk by id. Response: `{"ok": true|false}`.
+
+#### `GET /doc/list`
+List every stored chunk. Each entry is `{id, title, preview, words}`; `preview` is the first 120 characters of the chunk text with an ellipsis if truncated.
+
+#### `POST /doc/search`
+Embed a question and return the top-k most similar chunks without generating an answer. JSON body: `{"question": "...", "k": 3}`. Response: `{"contexts": [{"id", "title", "distance"}, ...]}`.
+
+#### `POST /doc/ask`
+RAG: embed the question, retrieve the top-k chunks, and ask the local LLM to answer using the retrieved context. JSON body: `{"question": "...", "k": 3}`. Response includes the answer text, the generation model name, the full retrieved contexts (with text and distance), and the document count. The prompt template is in `app.py` (`RAG_PROMPT_TEMPLATE`).
+
+#### `GET /status`
+Health and inventory endpoint. Response: `{"ollamaAvailable": bool, "embedModel": str, "genModel": str, "docCount": int, "docDims": int, "demoDims": 16, "demoCount": int}`.
+
+---
+
+## Project structure
+
+```
+.
+├── index.html                      Single-page UI (search, PCA scatter, chat)
+├── main.py                         Root-level shim → py.vectordb.run_server()
+├── requirements.txt                Runtime + test dependencies
+├── py/
+│   ├── pyproject.toml              Build config, console script, deps
+│   ├── vectordb/
+│   │   ├── __init__.py             DIMS, OLLAMA_HOST, OLLAMA_PORT, version
+│   │   ├── __main__.py             `python -m vectordb`
+│   │   ├── app.py                  Flask app, 14 routes
+│   │   ├── db.py                   VectorDB (demo index)
+│   │   ├── document_db.py          DocumentDB (chunk store)
+│   │   ├── bruteforce.py           Linear-scan k-NN
+│   │   ├── kdtree.py               Axis-aligned k-d tree
+│   │   ├── hnsw.py                 Hand-ported HNSW
+│   │   ├── distances.py            Cosine, Euclidean, Manhattan
+│   │   ├── chunker.py              Overlapping word-boundary chunker
+│   │   ├── ollama.py               Ollama HTTP client
+│   │   ├── demo_data.py            20 seeded 16D vectors
+│   │   └── json_format.py          Byte-exact JSON formatters
+│   └── tests/                      93 tests across 12 files
+└── docs/migration/                 Migration design notes (architecture, parity, decisions)
 ```
 
 ---
 
-## Project Structure
+## Current limitations
 
-```
-VectorDB/
-├── main.py        ← Python backend (HNSW, KD-Tree, Brute Force, REST API, RAG)
-├── requirements.txt       ← Python dependencies
-├── index.html      ← Frontend (PCA scatter plot, chat UI, benchmark)
-├── requirements.txt ← Python dependencies
-└── README.md       ← This file
-```
-
-### Architecture (main.py)
-
-```
-BruteForce          O(N·d)      Exact, baseline
-KDTree              O(log N)    Exact, axis-aligned partitioning
-HNSW                O(log N)    Approximate, multilayer small-world graph
-
-VectorDB            Unified interface over all 3 (16D demo vectors)
-DocumentDB          HNSW-only index for real Ollama embeddings (768D)
-OllamaClient        HTTP client → /api/embeddings + /api/generate
-```
+- **In-memory only.** No persistence; the server loses all inserted documents and any inserted demo vectors on restart. The 20 demo vectors are reseeded at startup.
+- **Single-threaded.** The Flask dev server runs with `threaded=False` to mirror the C++ service. Do not front the process with a multi-threaded WSGI server without first making the indices thread-safe.
+- **Demo index is fixed at 16 dimensions.** `DIMS` is a module constant; `VectorDB` does not support other widths.
+- **Ollama is the only embedding/generation backend.** There is no pluggable interface; the model names are hard-coded in `ollama.py` (`nomic-embed-text`, `llama3.2`).
+- **No C++ parity fixtures.** The test suite validates the Python implementation in isolation. The migration design notes (`docs/migration/04-algorithm-parity.md`) describe the per-algorithm behavior expected to match the former C++ service, but there is no automated cross-implementation regression test today.
+- **HNSW graph is approximate.** HNSW returns approximate nearest neighbors. The brute-force path through `DocumentDB` is used when fewer than 10 chunks are stored, and is also exposed via `/benchmark?algo=bruteforce` for the demo index.
 
 ---
 
-## Algorithm Deep Dive
+## Migration history
 
-### HNSW (Hierarchical Navigable Small World)
+This service was previously a C++ application built around the `cpp-httplib` single-header HTTP library. That backend has been removed; the current implementation is a line-for-line Python port. The `httplib.h` vendored dependency and `main.cpp` source are no longer in the tree. The Python port was modularized into the `py/vectordb/` package so that each search algorithm, distance metric, and storage layer is independently testable.
 
-Nodes are inserted into a multilayer graph. Each node randomly gets assigned a maximum layer. Layer 0 has all nodes with many connections; higher layers have fewer nodes (exponentially fewer) with longer-range connections.
+Behavior that the frontend or external clients depend on was preserved intentionally: the JSON wire format (including the quoted form of `f6q`-formatted floats), the HNSW graph topology used by the UI, the CORS preflight response shape, the `err(...)` body on validation failures with HTTP 200, and the per-algorithm latency reporting in `/benchmark`. Compatibility-sensitive numerical behavior — including the non-negative cosine clamp, the deterministic HNSW neighbor selection, and the small-N brute-force fallback in `DocumentDB` — was ported to match the original semantics.
 
-**Insert:** Start at the top layer, greedily find the nearest node, drop a layer, repeat. At each layer from your assigned max down to 0, run a beam search (ef_construction=200) and connect to the M nearest neighbors bidirectionally.
-
-**Search:** Same greedy descent from top layer. At layer 0, expand to ef nearest candidates using a priority queue.
-
-**Why it's fast:** The upper layers act like a highway — you quickly get to the right neighborhood, then zoom in at layer 0.
-
-### KD-Tree (K-Dimensional Tree)
-
-Binary space partitioning. Each node splits space along one dimension (cycling through all dimensions). Search prunes entire subtrees when the closest possible point in that subtree can't beat the current best — the "ball within hyperslab" check.
-
-**Weakness:** Degrades with high dimensions (curse of dimensionality). Works well for ≤20D, becomes close to brute force at 768D.
-
-### Why HNSW Wins at High Dimensions
-
-KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almost all the space is near the boundary of the hypersphere — no subtrees get pruned. HNSW's graph-based approach doesn't have this problem.
-
----
-
-## Common Issues
-
-| Problem | Fix |
-|---|---|
-| `Ollama: OFFLINE` in header | Run `ollama serve` in a terminal |
-| Embedding takes forever | Ollama is downloading the model on first use, wait 2 min |
-| `python: command not found` | Add `C:\msys64\ucrt64\bin` to Windows PATH |
-| Port 8080 already in use | Kill the process: `netstat -ano \| findstr 8080` then `taskkill /PID <pid> /F` |
-| LLM answer is slow | Normal — llama3.2 takes 10–30s on a laptop CPU. Use llama3.2:1b for faster answers |
-
-### Use a Smaller/Faster LLM
-
-If llama3.2 is too slow on your laptop, switch to the 1B model:
-
-```powershell
-ollama pull llama3.2:1b
-```
-
-Then edit [main.py](main.py) line where `genModel` is set:
-```cpp
-std::string genModel = "llama3.2:1b";   // change this
-```
-Recompile and restart.
-
----
-
-
-
-
-
+Design notes for the migration (architecture, dependencies, API contract, algorithm parity, module decomposition, test strategy, execution plan, and risks/decisions) are in `docs/migration/`.
